@@ -1,4 +1,5 @@
-const version = "0.2.0";
+
+const version = "0.3.0";
 const copyright = "(c)2025 Matt Bushell";
 const DEBUG = true;
 const EXAMPLE_URL = "https://kardiak.co.uk/api/download/count";
@@ -6,6 +7,8 @@ const EXAMPLE_URL = "https://kardiak.co.uk/api/download/count";
 const TIP_URL = "https://ko-fi.com/I3I171N0";
 
 const SKIP_LIST = "@context,meta";
+
+let sensorCount = 0;
 
 // Test URLS
 // https://environment.data.gov.uk/flood-monitoring/id/measures/E71239-level-tidal_level-Mean-15_min-mAOD/readings?_sorted&_limit=2
@@ -109,13 +112,13 @@ function main() {
   const getButtonTag = Object.assign(document.createElement('button'), {
     id: 'getButton',
     textContent: 'GET',
-    style: 'background-color: green; color: white; font-weight: bold; margin:6px; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer;'
+    style: 'background-color: green; color: white; font-weight: bold; margin:6px; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; opacity: 1; box-shadow: 0 0 5px #0f0;'
   });
 
   const postButtonTag = Object.assign(document.createElement('button'), {
     id: 'postButton',
     textContent: 'POST',
-    style: 'background-color: blue; color: white; font-weight: bold; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer;'
+    style: 'background-color: blue; color: white; font-weight: bold; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; opacity: 0.6;'
   });
 
   // 🔁 Toggle logic
@@ -152,13 +155,13 @@ function main() {
   const simpleButtonTag = Object.assign(document.createElement('button'), {
     id: 'simpleButton',
     textContent: 'SIMPLE',
-    style: 'background-color: rgba(205, 147, 0, 1); color: white; font-weight: bold; margin:6px; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer;'
+    style: 'background-color: rgba(205, 147, 0, 1); color: white; font-weight: bold; margin:6px; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; box-shadow:0 0 5px rgba(205, 147, 0, 1);'
   });
 
   const complexButtonTag = Object.assign(document.createElement('button'), {
     id: 'complexButton',
     textContent: 'COMPLEX',
-    style: 'background-color: rgba(110, 21, 253, 1); color: white; font-weight: bold; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer;'
+    style: 'background-color: rgba(110, 21, 253, 1); color: white; font-weight: bold; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; opacity: 0.6;'
   });
 
   // 🔁 Toggle logic
@@ -197,7 +200,7 @@ function main() {
   });
 
   submitButtonTag.addEventListener('click', () => {
-    outputTextAreaTag.value = process(dataTextAreaTag, selectedMethod, selectedComplexity, inputURLTag.value, inputNameTag.value, inputIntervalTag.value, inputUnitTag.value);
+    outputTextAreaTag.value = process(dataTextAreaTag, selectedMethod, selectedComplexity, inputURLTag.value, inputNameTag.value, inputIntervalTag.value );
   });
 
   function note(pId, pData) {
@@ -250,28 +253,45 @@ function toSnakeCase(str) {
     .replace(/\s+/g, '_'); // replace spaces with underscores
 }
 
-function isNumericOrTimeValue(value) {
-  if (typeof value === 'number' && !isNaN(value)) {
-    return true;
+function getHomeAssistantClassification(value) {
+
+  let inputUnitTag = document.getElementById("sensorDownloadInput");
+
+  const result = {
+    device_class: null,
+    unit_of_measurement: inputUnitTag.value.length > 0 ? inputUnitTag.value : "lemmings",
+    include_as_sensor: true
+  };
+
+  // Exclude null, undefined, or empty/whitespace-only strings
+  if (value === null || value === undefined || (typeof value === 'string' && value.trim() === "")) {
+    result.include_as_sensor = false;
+    result.unit_of_measurement = null;
+    return result;
   }
 
-  if (typeof value === 'string' && value.trim() !== "") {
+  if (typeof value === 'string') {
     const trimmedValue = value.trim();
 
-    if (/^[-+]?(\d+|\d*\.\d+)$/.test(trimmedValue)) {
-      return isFinite(trimmedValue);
+    // Check for URL (http, https, and optional www) - EXCLUDE
+    const urlRegex = /^(https?:\/\/|www\.)\S+$/i;
+    if (urlRegex.test(trimmedValue)) {
+      result.include_as_sensor = false;
+      result.unit_of_measurement = null;
+      return result;
     }
 
-    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(trimmedValue)) {
-      return true;
-    }
-
-    if (/^\d{4}[-/]\d{2}[-/]\d{2}$/.test(trimmedValue)) {
-      return true;
+    // Check for ISO 8601 Datetime String - CLASSIFY
+    const timestampRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[-+]\d{2}:\d{2})$/;
+    if (timestampRegex.test(trimmedValue)) {
+      result.device_class = 'timestamp';
+      result.unit_of_measurement = null;
+      return result;
     }
   }
 
-  return false;
+  // Any other number, boolean, or non-matching string is included as a generic sensor
+  return result;
 }
 
 function processJsonRecursive(
@@ -279,13 +299,10 @@ function processJsonRecursive(
   currentPath,
   listArray,
   inputName,
-  inputUnit,
   addThis
 ) {
 
   const sensorBaseName = inputName.length > 0 ? inputName : "Your Sensor Name";
-  const unitText = inputUnit.length > 0 ? inputUnit : "lemmings";
-
 
   for (const [key, value] of Object.entries(currentNode)) {
 
@@ -319,23 +336,26 @@ function processJsonRecursive(
               arrayPath,
               listArray,
               inputName,
-              inputUnit,
               addThis
             );
           } else {
 
-            if (!isNumericOrTimeValue(item)) {
-              console.log(`Skipping non-numeric/time value in array at index: ${index}`);
+            let details = getHomeAssistantClassification(value);
+
+            if (!details.include_as_sensor) {
+              console.log(`Skipping: ${index}`);
               return; 
             }
 
             console.log("Populating 1 (Numeric/Time Array Value)");
-            const sensorName = `${sensorBaseName} ${key} ${index}`;
-            const snakeIn = `${sensorBaseName} ${arrayPath}`;
+            const sensorName = `[${++sensorCount}]${sensorBaseName} ${key} ${index}`;
+            const snakeIn = `${sensorCount} ${sensorBaseName} ${arrayPath}`;
+
 
             addThis += `     - name: "${sensorName}"\n`;
             addThis += `       value_template: "{{ value_json${arrayPath} | default(none) }}"\n`;
-            addThis += `       unit_of_measurement: "${unitText}"\n`;
+            if (details.unit_of_measurement) addThis += `       unit_of_measurement: "${details.unit_of_measurement}"\n`;
+            if (details.device_class) addThis += `       device_class: "${details.device_class}"\n`;
             addThis += `       unique_id: "${toSnakeCase(snakeIn)}"\n`;
           }
         });
@@ -346,25 +366,27 @@ function processJsonRecursive(
           newPath,
           listArray,
           inputName,
-          inputUnit,
           addThis
         );
       }
 
     } else {
+
+      let details = getHomeAssistantClassification(value);
     
-      if (!isNumericOrTimeValue(value)) {
-        console.log(`Skipping non-numeric/time value for key: ${key}`);
+      if (!details.include_as_sensor) {
+        console.log(`Skipping ${key}`);
         continue; // Skips to the next key in the for loop
       }
 
       console.log("Populating 2 (Numeric/Time Value)");
-      const sensorName = `${sensorBaseName} ${key}`;
-      const snakeIn = `${sensorBaseName} ${newPath}`;
+      const sensorName = `[${++sensorCount}]${sensorBaseName} ${key}`;
+      const snakeIn = `${sensorCount} ${sensorBaseName} ${newPath}`;
 
       addThis += `     - name: "${sensorName}"\n`;
       addThis += `       value_template: "{{ value_json${newPath} | default(none) }}"\n`;
-      addThis += `       unit_of_measurement: "${unitText}"\n`;
+      if (details.unit_of_measurement) addThis += `       unit_of_measurement: "${details.unit_of_measurement}"\n`;
+      if (details.device_class) addThis += `       device_class: "${details.device_class}"\n`;
       addThis += `       unique_id: "${toSnakeCase(snakeIn)}"\n`;
     }
   }
@@ -372,7 +394,9 @@ function processJsonRecursive(
   return addThis;
 }
 
-function process(dataTextArea, method, complexity, apiURL, inputName, inputInterval, inputUnit) {
+function process(dataTextArea, method, complexity, apiURL, inputName, inputInterval) {
+
+  sensorCount = 0;
 
   if (!isValidURL(apiURL)) {
     return "Error: Enter a valid URL";
@@ -417,7 +441,10 @@ function process(dataTextArea, method, complexity, apiURL, inputName, inputInter
       dataTextArea.value = JSON.stringify(json, null, 2);
       if (complexity == "SIMPLE") {
         const [key, value] = Object.entries(json)[0];
+        let details = getHomeAssistantClassification(value);
         document.getElementById("outputTextArea").value = document.getElementById("outputTextArea").value.replace("YOUR_JSON_KEY", key);
+        document.getElementById("outputTextArea").value = document.getElementById("outputTextArea").value.replace("YOUR_UNIT_OF_MEASUREMENT", details.unit_of_measurement);
+        
       } else {
 
         let addThis = "    sensor:\n";
@@ -428,7 +455,6 @@ function process(dataTextArea, method, complexity, apiURL, inputName, inputInter
           "", // Start with an empty path
           listArray,
           inputName,
-          inputUnit,
           addThis // Pass the initial string
         );
 
@@ -443,13 +469,14 @@ function process(dataTextArea, method, complexity, apiURL, inputName, inputInter
 
   let output = "";
   if (complexity == "SIMPLE") {
+    
     output += "sensor:\n";
     output += "  - platform: rest\n";
-    output += `    name: ${(inputName.length > 0 ? inputName : "Your Sensor Name")}\n`;
-    output += "    unique_id: " + toSnakeCase((inputName.length > 0 ? inputName : "your_sensor_name")) + "\n";
+    output += `    name: "[${++sensorCount}] ${(inputName.length > 0 ? inputName : "Your Sensor Name")}"\n`;
+    output += `    unique_id: "${sensorCount}_${toSnakeCase((inputName.length > 0 ? inputName : "your_sensor_name"))}"\n`;
     output += "    resource: " + apiURL + "\n";
     output += "    value_template: '{{ value_json.YOUR_JSON_KEY }}'\n";
-    output += `    unit_of_measurement: ${(inputUnit.length > 0 ? inputUnit : "lemmings")}\n`;
+    output += "    unit_of_measurement: YOUR_UNIT_OF_MEASUREMENT\n";
     if (method === 'POST') {
       output += "    method: POST\n";
       output += "    payload: '{ \"Key1\" : \"Value1\" }'\n";
